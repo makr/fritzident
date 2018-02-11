@@ -3,12 +3,12 @@ CFLAGS ?= -Wall -O2
 LDFLAGS +=  `pkg-config --libs libsystemd`  
 
 
-BINDIR = $(DESTDIR)/usr/sbin
+BINDIR = $(DESTDIR)/usr/local/sbin
 SYSTEMDDIR = /lib/systemd/system
-MANDIR = $(DESTDIR)/usr/share/man/man8
+MANDIR = $(DESTDIR)/usr/local/share/man/man8
 NAME = fritzident
 
-
+all: fritzident
 
 fritzident: debug.o main.o netinfo.o userinfo.o
 	cc -o fritzident debug.o main.o netinfo.o userinfo.o $(LDFLAGS)

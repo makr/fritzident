@@ -17,34 +17,34 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/syslog.h>
 
+#include "debug.h"
 
 void debugLog(int pri, const char *fmsg, ...)
 {
-	va_list args;
-	
-	va_start(args, fmsg);
-	vsyslog(pri, fmsg, args);
-	va_end(args);
+  va_list args;
+
+  va_start(args, fmsg);
+  //vfprintf(stderr, fmsg, args);
+  vsyslog(pri, fmsg, args);
+  va_end(args);
 }
 
-
 /**
- * @brief Increase verbositx by one, max value = 7
+ * @brief Increase verbosity by one, max value = 7
  * 
  * @return void
  */
 void raiseVerbosity()
 {
-  setlogmask((setlogmask(0) << 1) +1);
+  setlogmask((setlogmask(0) << 1) + 1);
 }
 
-void initLogging(){
+void initLogging()
+{
   setlogmask(LOG_UPTO(4));
 }

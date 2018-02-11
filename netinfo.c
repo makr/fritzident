@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -27,7 +28,6 @@
 #include <syslog.h>
 
 #include "netinfo.h"
-
 #include "debug.h"
 
 #define IPV4_TCP_PORTS  "/proc/net/tcp"
@@ -39,82 +39,73 @@
 //  B0B1B2B3:PORT
 // with Bx representing the IP address in host byte order
 // the string is returned in a static buffer, which is overwritten at every call
-const char *ipv4_bindstring(const char *ipv4, unsigned int port)
+static const char *ipv4_bindstring(const char *ipv4, unsigned int port,
+				   char **buffer, size_t bsize)
 {
-	static char buffer[32];
-	union {
-		uint8_t b[4];
-		uint32_t bin;
-	} ip_s;
+  union {
+    uint8_t  b[4];
+    uint32_t bin;
+  } ip_s;
 
-	sscanf(ipv4, "%hhu.%hhu.%hhu.%hhu",
-	       &(ip_s.b[0]), &(ip_s.b[1]), &(ip_s.b[2]), &(ip_s.b[3]));
+  if (!buffer) return NULL;
 
-	sprintf(buffer, "%08X:%04X", ip_s.bin, port);
+  sscanf(ipv4, "%hhu.%hhu.%hhu.%hhu",
+	 &(ip_s.b[0]), &(ip_s.b[1]), &(ip_s.b[2]), &(ip_s.b[3]));
+  snprintf(*buffer, bsize, "%08X:%04X", ip_s.bin, port);
 
-	debugLog(LOG_DEBUG, "Bindstring \"%s\"\n", buffer);
-	return buffer;
+  debugLog(LOG_DEBUG, "Bindstring \"%s\"\n", *buffer);
+  return *buffer;
 }
 
-		
+static uid_t uid_from_portlist(const char *procfile, const char *bindstring)
+{
+  char buffer[1024];
+  uid_t id = UID_NOT_FOUND;
+  FILE *portlist=fopen(procfile, "r");
+
+  while (fgets(buffer, sizeof(buffer), portlist)) {
+    char *uid;
+    strtok(buffer, " "); // INDEX (ignored)
+    char *local=strtok(NULL, " "); // LOCAL ADDRESS
+    strtok(NULL, " "); // remote address (ignored)
+    strtok(NULL, " "); // st (ignored)
+    strtok(NULL, " "); // tx:rx queues (ignored)
+    strtok(NULL, " "); // tr:tm-when (ignored)
+    strtok(NULL, " "); // retrnsmt (ignored)
+    uid=strtok(NULL, " "); // UID
+			   // timeout, inode, etc. (ingored)
+    if (strcmp(local, bindstring)==0) {
+      id = strtol(uid, NULL, 10);
+      debugLog(LOG_DEBUG, "Found UID=%lu\n", id);
+      break;
+    }
+  }
+  fclose(portlist);
+  return (uid_t)id;
+}
+
 // find the UID associated with a specific local ipv4 TCP port
 uid_t ipv4_tcp_port_uid(const char *ipv4, unsigned int port)
 {
-	char buffer[1024];
-	const char *bindstring = ipv4_bindstring(ipv4, port);
+  char bindstring[32], *pbstr = bindstring;
+  uid_t id;
 
-	FILE *portlist=fopen(IPV4_TCP_PORTS, "r");
-	while (fgets(buffer, 1024, portlist)) {
-	    char *uid;
-	    char *field=strtok(buffer, " ");        // INDEX (ignored)
-	    char *local=field=strtok(NULL, " ");    // LOCAL ADDRESS
-	    field=strtok(NULL, " ");                // (ignored)
-	    field=strtok(NULL, " ");                // (ignored)
-	    field=strtok(NULL, " ");                // (ignored)
-	    field=strtok(NULL, " ");                // (ignored)
-	    field=strtok(NULL, " ");                // (ignored)
-	    uid=strtok(NULL, " ");                  // UID
-	    if (strcmp(local, bindstring)==0) {
-            unsigned long id;
-            sscanf(uid, "%lu", &id);
-	    debugLog(LOG_DEBUG, "Found UID=%lu\n", id);
-	    fclose(portlist);
-            return (uid_t)id;
-	    }
-	}
-	fclose(portlist);
-	debugLog(LOG_NOTICE, "UID fpr UDP Port %i Not found\n", port);
-	return UID_NOT_FOUND;
+  ipv4_bindstring(ipv4, port, &pbstr, sizeof(bindstring));
+  id=uid_from_portlist(IPV4_TCP_PORTS, bindstring);
+  if (UID_NOT_FOUND == id)
+    debugLog(LOG_NOTICE, "UID for TCP port %i not found\n", port);
+  return id;
 }
 
 // find the UID associated with a specific local ipv4 UDP port
 uid_t ipv4_udp_port_uid(const char *ipv4, unsigned int port)
 {
-	char buffer[1024];
-	const char *bindstring = ipv4_bindstring(ipv4, port);
+  char bindstring[32], *pbstr = bindstring;
+  uid_t id;
 
-	FILE *portlist=fopen(IPV4_UDP_PORTS, "r");
-	while (fgets(buffer, 1024, portlist)) {
-	    char *uid;
-	    char *field=strtok(buffer, " ");        // INDEX (ignored)
-	    char *local=field=strtok(NULL, " ");    // LOCAL ADDRESS
-	    field=strtok(NULL, " ");                // (ignored)
-	    field=strtok(NULL, " ");                // (ignored)
-	    field=strtok(NULL, " ");                // (ignored)
-	    field=strtok(NULL, " ");                // (ignored)
-	    field=strtok(NULL, " ");                // (ignored)
-	    uid=strtok(NULL, " ");                  // UID
-	    if (strcmp(local, bindstring)==0) {
-            unsigned long id;
-            sscanf(uid, "%lu", &id);
-	    debugLog(LOG_DEBUG, "Found UID=%lu\n", id);
-	    fclose(portlist);
-            return (uid_t)id;
-	    }
-	}
-	fclose(portlist);
-	debugLog(LOG_NOTICE, "UID for TCP port %i Not found\n", port);
-	return UID_NOT_FOUND;
+  ipv4_bindstring(ipv4, port, &pbstr, sizeof(bindstring));
+  id=uid_from_portlist(IPV4_UDP_PORTS, bindstring);
+  if (UID_NOT_FOUND == id)
+    debugLog(LOG_NOTICE, "UID for UDP port %i not found\n", port);
+  return id;
 }
-
-	
