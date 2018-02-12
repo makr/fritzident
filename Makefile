@@ -1,27 +1,27 @@
 CC ?= gcc
-CFLAGS ?= -Wall -O2 
-LDFLAGS +=  `pkg-config --libs libsystemd`  
-
+CFLAGS ?= -m64 -Wall -Wextra -pie -fPIE -fstack-protector-all --param ssp-buffer-size=4 -Wstack-protector -Wformat -Wformat-security -D_FORTIFY_SOURCE=2 -O2
+LDFLAGS += -Wl,-pie,-z,relro,-z,now `pkg-config --libs libsystemd`
 
 BINDIR = $(DESTDIR)/usr/local/sbin
-SYSTEMDDIR = /lib/systemd/system
+#SYSTEMDDIR = /lib/systemd/system
+SYSTEMDDIR = /usr/lib/systemd/system
 MANDIR = $(DESTDIR)/usr/local/share/man/man8
 NAME = fritzident
 
-all: fritzident
+all: $(NAME)
 
-fritzident: debug.o main.o netinfo.o userinfo.o
-	cc -o fritzident debug.o main.o netinfo.o userinfo.o $(LDFLAGS)
+$(NAME): debug.o main.o netinfo.o userinfo.o
+	$(CC) $(CFLAGS) $(LDFLAGS) debug.o main.o netinfo.o userinfo.o -o $@
 
 %.o: %.c
-	$(CC) -c $(CFLAGS)  $<
+	$(CC) $(CFLAGS) -c $<
 
 install-man:
-	install -d -m644 fritzident.8 $(MANDIR)/fritzident.8
+	install -d -m644 $(NAME).8 $(MANDIR)/$(NAME).8
 
 install-systemd:
-	install -d -m644 fritzident.service $(SYSTEMDDIR)/fritzident.service	
-	install -d -m644 fritzident.socket $(SYSTEMDDIR)/fritzident.socket	
+	install -d -m644 $(NAME).service $(SYSTEMDDIR)/$(NAME).service
+	install -d -m644 $(NAME).socket $(SYSTEMDDIR)/$(NAME).socket
 
 install-bin:
 	install -d $(BINDIR)
@@ -30,7 +30,7 @@ install-bin:
 install: install-man install-systemd install-bin
 
 clean:
-	rm -f *.o fritzident
+	rm -f *.o $(NAME)
 
 uninstall:
 	rm $(BINDIR)/$(NAME)

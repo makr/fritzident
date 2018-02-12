@@ -4,7 +4,7 @@ Documentation=man:fritzident(8)
 Requires=fritzident.socket
 
 [Service]
-ExecStart=/usr/sbin/fritzident
+ExecStart=/usr/local/sbin/fritzident
 #StandardInput=socket
 
 [Install]

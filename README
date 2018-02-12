@@ -1,35 +1,51 @@
 Description
 ===========
-fritzident  is a program that eneabeling the parental control function of the 
-AVM Fritz!Box.  It mimics the stan‐ dard AVM Windows application that allows the 
-Fritz!Box to recognize individual users connecting to the internet. This 
-application is supposed to run under control of inetd or systemd.
+fritzident is a program that is amending the parental control function of
+the AVM Fritz!Box. It mimics the standard AVM Windows application that allows
+the Fritz!Box to recognize individual users connecting to the Internet.
+This application is supposed to run under control of inetd or systemd.
 
 General Information
 ===================
-Fritzident will run as an stand alone server. The provided Makefile can be used 
-to compile the program. Obviously, a the make utility, a C compiler and base C 
-libraries need to be installed for this to work. Compilation has been tested on 
-Ubuntu 15.04.
+fritzident will run as an stand alone server. The provided Makefile can be used
+to compile the program. Obviously, a the make utility, a C compiler and base C
+libraries need to be installed for this to work.
+Compilation had initially been tested on Ubuntu 15.04.
+It currently is known to compile and run on openSUSE 42.3.
 
 Installation
 ============
-To install fritzident, copy the executable program to an appropriate location 
-and start the server after establishing the network services.  You can use the 
-provides systemd unit files or the init.d script. An inetd is no longer needed.
+To install fritzident, copy the executable program to an appropriate location
+or use 'make install' to copy it into /usr/local/sbin. Start the server after
+establishing the network services. You can use the provided systemd unit files
+or the init.d script. An inetd is no longer needed.
+
+Security
+========
+The intent of this service is to disclose information about the internal
+configuration of the machine!
+
+So if you do not need this service, do not install and start it!
+
+But as you are reading this page, you probably see a need to make use of this
+service. Just keep in mind, that once this service is running, the AVM
+Fritz!Box is not the only one knowing how to connect to this service. You may
+want to configure a narrow rule into your machine's local firewall to only
+allow traffic from your AVM Fritz!Box to the port of this service and vice
+versa.
 
 Internal working
 ================
-At startup fritzident is creating a socket on the port 14013 and sends out a 
-prompt message, then waits for a single command, and sends the response. The 
-prompt message is "AVM IDENT", and is required for the Fritz!Box to recognize 
-the agent.
+At startup fritzident is creating a socket on the port 14013 and sends out a
+prompt message, then waits for a single command, and sends the response. The
+prompt message is "AVM IDENT", and is required for the Fritz!Box to recognize
+the service.
 
 Recognized commands:
 	USERS		return a list of known users
 	TCP ip:port	return name of the user for the specified local TCP port
 	UDP ip:port	idem, but for UDP ports
 
-The prompt, as well as all replies, are terminated by a CR & NL (ASC 13 + ASC 
-10). Commands are recognized with either CR & NL or just NL line termination. 
+The prompt, as well as all replies, are terminated by a CR & NL (ASC 13 + ASC
+10). Commands are recognized with either CR & NL or just NL line termination.
 This allows fritzident to be tested interactively.
