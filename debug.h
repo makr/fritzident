@@ -2,6 +2,7 @@
  * debug.h
  *
  * Copyright (C) 2013 - Unknown
+ * Copyright (C) 2018 - Matthias Kraft <m.kraft@gmx.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

@@ -2,6 +2,7 @@
  * main.c
  * Copyright (C) 2013 Andre Larbiere <andre@larbiere.eu>
  * Copyright (C) 2015 Nils Naumann <nau@gmx.net>
+ * Copyright (C) 2018 - Matthias Kraft <m.kraft@gmx.com>
  *
  * fritzident is free software: you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -22,9 +23,7 @@
 #include <stdlib.h>
 #include <getopt.h>
 #include <string.h>
-#include <unistd.h> 
-#include <pwd.h>
-#include <syslog.h>
+#include <unistd.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <errno.h>
@@ -36,8 +35,8 @@
 
 #define PORT 14013 /* Fritzident port */ 
 #define BUFFER 256
-#define REAL_UID_MIN 1000L /* ordinary users usually start at 1000 */
-#define REAL_UID_MAX 65533L /* 'nobody' as max user is usually 65334 */
+#define REAL_UID_MIN (1000L) /* ordinary users usually start at 1000 */
+#define REAL_UID_MAX (65533L) /* 'nobody' as max user is usually 65334 */
 
 void SocketServer(int port);
 void usage(const char *cmdname);
@@ -60,7 +59,7 @@ int main(int argc, char *argv[])
 
   initLogging();
 
-  while ((c = getopt_long(argc, argv, "vd:p:i:a:",
+  while ((c = getopt_long(argc, argv, "vd:p:i:a:h",
 			  long_options, &option_index)) >= 0) {
     switch (c) {
     case 'v':
@@ -101,8 +100,8 @@ int main(int argc, char *argv[])
       return 0;
     default:
       fprintf(stderr, "Unknown option\n");
-      fprintf(stderr, "Usage: %s [-h] [-v] [-p port] [-d domain] "
-		      "[-i min_user_id] [-a max_user_id]\n", argv[0]);
+      fprintf(stderr, "Usage: %s [-h] [-v[v[v]]] [-p port] [-d domain] "
+		      "[-i min_uid] [-a max_uid]\n", argv[0]);
       return 1;
     }
   }
@@ -119,7 +118,7 @@ int main(int argc, char *argv[])
   return 0;
 }
 
-void sendResponse(int client_fd, const char *response, ...)
+static void sendResponse(int client_fd, const char *response, ...)
 {
   char msg[BUFFER];
   int n;
@@ -132,33 +131,34 @@ void sendResponse(int client_fd, const char *response, ...)
 
   nSent = send(client_fd, msg, n + 1, 0);
   if (nSent < n + 1) {
-    debugLog(LOG_ERR, "Sending Response failed: %s", msg);
-    debugLog(LOG_ERR, "send: %s\n", strerror(errno));
+    debugLog(LOG_ERR, "Sending '%s' failed: %s", msg, strerror(errno));
     exit(errno);
   } else {
     debugLog(LOG_DEBUG, "sent: %s", msg);
   }
 }
 
-void execUSERS(int client_fd)
+static void execUSERS(int client_fd)
 {
-  struct passwd *userinfo = getpwent();
-  while (userinfo) {
+  struct passwd *userinfo;
+
+  setpwent();
+  while ((userinfo = getpwent()) != NULL) {
     if (included_uid(userinfo->pw_uid)) {
       debugLog(LOG_INFO, "USERS: %s\n", add_default_domain(userinfo->pw_name));
       sendResponse(client_fd, "%s\r\n", add_default_domain(userinfo->pw_name));
+    } else {
+      debugLog(LOG_DEBUG, "Ignoring user entry for uid %lu.\n", userinfo->pw_uid);
     }
-    userinfo = getpwent();
   }
   endpwent();
 }
 
-void execTCP(int client_fd, const char *ipv4, const char *port)
+static void execTCP(int client_fd, const char *ipv4, const char *port)
 {
-  unsigned int portNumber;
   uid_t uid;
-  sscanf(port, "%u", &portNumber);
-  uid = ipv4_tcp_port_uid(ipv4, portNumber);
+
+  uid = ipv4_tcp_port_uid(ipv4, (unsigned int)strtol(port, NULL, 10));
   if (uid != UID_NOT_FOUND) {
     if (included_uid(uid)) {
       struct passwd *user = getpwuid(uid);
@@ -171,12 +171,11 @@ void execTCP(int client_fd, const char *ipv4, const char *port)
   }
 }
 
-void execUDP(int client_fd, const char *ipv4, const char *port)
+static void execUDP(int client_fd, const char *ipv4, const char *port)
 {
-  unsigned int portNumber;
   uid_t uid;
-  sscanf(port, "%u", &portNumber);
-  uid = ipv4_udp_port_uid(ipv4, portNumber);
+
+  uid = ipv4_udp_port_uid(ipv4, (unsigned int)strtol(port, NULL, 10));
   if (uid != UID_NOT_FOUND) {
     if (included_uid(uid)) {
       struct passwd *user = getpwuid(uid);
@@ -207,10 +206,10 @@ void SocketServer(int port)
     debugLog(LOG_ERR, "Too many file descriptors received.\n");
     exit(1);
   } else if (n == 1) {
-    debugLog(LOG_DEBUG, "Socket passed by systemd\n");
+    debugLog(LOG_DEBUG, "Socket passed by systemd.\n");
     socket_fd = SD_LISTEN_FDS_START + 0;
   } else {
-    debugLog(LOG_DEBUG, "Creating socket\n");
+    debugLog(LOG_DEBUG, "Creating socket ...\n");
     if ((socket_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
       debugLog(LOG_ERR, "socket: %s\n", strerror(errno));
       exit(errno);
@@ -248,12 +247,15 @@ void SocketServer(int port)
 	  inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port),
 	  strerror(errno));
       exit(errno);
+    } else {
+      debugLog(LOG_INFO, "Accepted connection from  %s:%d\n",
+	       inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
     }
 
     bytes = send(client_fd, "AVM IDENT\r\n", strlen("AVM IDENT\r\n") + 1, 0);
     if (bytes < 0) {
-      debugLog(LOG_ERR, "Sending \"AVM IDENT\" failed!");
-      exit(-1);
+      debugLog(LOG_ERR, "Sending \"AVM IDENT\" failed: %m");
+      exit(errno);
     }
 
     /* wait for data */
@@ -282,7 +284,9 @@ void SocketServer(int port)
     } else if (strcmp(cmdVerb, "TCP") == 0) {
       char *localIp = strtok(NULL, ":");
       char *localPort = strtok(NULL, "\r\n");
-      debugLog(LOG_INFO, "Searching for \"%s:%s\"\n", localIp, localPort);
+      debugLog(LOG_INFO, "Searching for TCP \"%s:%s\"\n",
+	       (localIp ? localIp : "(none)"),
+	       (localPort ? localPort : "(none)"));
       if (localIp != NULL && localPort != NULL)
 	execTCP(client_fd, localIp, localPort);
       else
@@ -292,13 +296,15 @@ void SocketServer(int port)
     } else if (strcmp(cmdVerb, "UDP") == 0) {
       char *localIp = strtok(NULL, ":");
       char *localPort = strtok(NULL, "\r\n");
-      debugLog(LOG_INFO, "Searching for \"%s:%s\"\n", localIp, localPort);
+      debugLog(LOG_INFO, "Searching for UDP \"%s:%s\"\n",
+	       (localIp ? localIp : "(none)"),
+	       (localPort ? localPort : "(none)"));
       if (localIp != NULL && localPort != NULL)
 	execUDP(client_fd, localIp, localPort);
       else
 	sendResponse(client_fd, "ERROR UNSPECIFIED\r\n");
     } else {
-      debugLog(LOG_NOTICE, "Unrecognized command \"%s\"\n", cmd);
+      debugLog(LOG_WARNING, "Unrecognized command \"%s\"\n", cmd);
       sendResponse(client_fd, "ERROR UNSPECIFIED\r\n");
     }
     /* Close data connection */
@@ -311,16 +317,17 @@ void SocketServer(int port)
 
 void usage(const char *cmdname)
 {
-  printf("Usage: %s [-v] [-p port] [-d domain]\n\n", cmdname);
+  printf("Usage: %s [-h] [-v[v[v]]] [-p port] [-d domain] [-i min_uid] [-a max_uid]\n\n", cmdname);
   printf("Answer Fritz!Box user identification requests.\n\n");
-  printf("%s mimics the standard AVM Windows application that allows the "
-         "Fritz!Box to recognize individual users connecting to the Internet.\n", cmdname);
+  printf("fritzident mimics the standard AVM Windows application that allows the "
+         "Fritz!Box to recognize individual users connecting to the Internet.\n");
   printf("Options:\n");
+  printf("\t-h - this usage information\n");
   printf("\t-v - increase verbosity (may be assed multiple times.)\n");
-  printf("\t-p port - to listen on if not 14013 (for debugging only)\n");
+  printf("\t-p port - to listen on if not %u (for debugging only)\n", PORT);
   printf("\t-d domain - fake a Windows domain\n");
-  printf("\t-i min_uid - min. user id to interpret as real user\n");
-  printf("\t-a max_uid - max. user id to interpret as real user\n");
+  printf("\t-i min_uid - min. user id to interpret as real user (default: %lu)\n", REAL_UID_MIN);
+  printf("\t-a max_uid - max. user id to interpret as real user (default: %lu)\n", REAL_UID_MAX);
   printf("\nLICENSE:\n");
   printf("This utility is provided under the GNU GENERAL PUBLIC LICENSE v3.0\n"
          "(see http://www.gnu.org/licenses/gpl-3.0.txt)\n");

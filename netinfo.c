@@ -2,6 +2,7 @@
  * netinfo.c
  *
  * Copyright (C) 2013 - Andre Larbiere <andre@larbiere.eu>
+ * Copyright (C) 2018 - Matthias Kraft <m.kraft@gmx.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,97 +16,103 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ *
+ * Note: This code is non-portable as it highly depends on /proc/net/{tcp,udp}.
+ *       Other non-portable stuff: %m in error handling
  */
 
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
 #include <arpa/inet.h>
-#include <syslog.h>
 
 #include "netinfo.h"
 #include "debug.h"
 
-#define IPV4_TCP_PORTS  "/proc/net/tcp"
-#define IPV4_UDP_PORTS  "/proc/net/udp"
-#define IPV6_TCP_PORTS  "/proc/net/tcp6"
-#define IPV6_UDP_PORTS  "/proc/net/udp6"
-
 // convert an IPv4 address & port number to a hex string in the format
 //  B0B1B2B3:PORT
 // with Bx representing the IP address in host byte order
-// the string is returned in a static buffer, which is overwritten at every call
+// the string is written into the provided buffer (>=14 Bytes)
 static const char *ipv4_bindstring(const char *ipv4, unsigned int port,
 				   char **buffer, size_t bsize)
 {
-  union {
-    uint8_t  b[4];
-    uint32_t bin;
-  } ip_s;
+  int rc;
+  uint32_t ipn;
 
   if (!buffer) return NULL;
+  if (port > 65535) return NULL;
 
-  sscanf(ipv4, "%hhu.%hhu.%hhu.%hhu",
-	 &(ip_s.b[0]), &(ip_s.b[1]), &(ip_s.b[2]), &(ip_s.b[3]));
-  snprintf(*buffer, bsize, "%08X:%04X", ip_s.bin, port);
-
-  debugLog(LOG_DEBUG, "Bindstring \"%s\"\n", *buffer);
-  return *buffer;
+  if ((rc = inet_pton(AF_INET, ipv4, &ipn)) > 0) {
+    snprintf(*buffer, bsize, "%08X:%04X", ipn, port);
+    debugLog(LOG_DEBUG, "Bindstring \"%s\"\n", *buffer);
+    return *buffer;
+  } else if (rc < 0) {
+    debugLog(LOG_ERR, "Error while converting IPv4 address '%s': %m\n", ipv4);
+    return NULL;
+  } else {
+    debugLog(LOG_ERR, "Invalid IPv4 address '%s'!\n", ipv4);
+    return NULL;
+  }
 }
 
-static uid_t uid_from_portlist(const char *procfile, const char *bindstring)
+// The files /proc/net/{tcp,udp} are almost identical, at least up to the point
+// of the uid.
+static uid_t uid_from_ipv4_connections(const char *procfile, const char *bindstring)
 {
-  char buffer[1024];
+  char buffer[256];
   uid_t id = UID_NOT_FOUND;
   FILE *portlist=fopen(procfile, "r");
 
-  while (fgets(buffer, sizeof(buffer), portlist)) {
-    char *uid;
-    strtok(buffer, " "); // INDEX (ignored)
-    char *local=strtok(NULL, " "); // LOCAL ADDRESS
-    strtok(NULL, " "); // remote address (ignored)
-    strtok(NULL, " "); // st (ignored)
-    strtok(NULL, " "); // tx:rx queues (ignored)
-    strtok(NULL, " "); // tr:tm-when (ignored)
-    strtok(NULL, " "); // retrnsmt (ignored)
-    uid=strtok(NULL, " "); // UID
-			   // timeout, inode, etc. (ingored)
-    if (strcmp(local, bindstring)==0) {
-      id = strtol(uid, NULL, 10);
-      debugLog(LOG_DEBUG, "Found UID=%lu\n", id);
-      break;
+  if (!portlist) {
+    debugLog(LOG_ERR, "Unable to open '%s': %m", procfile);
+  } else {
+    while ((fgets(buffer, sizeof(buffer), portlist)) != NULL) {
+      char *uid, *local;
+      if (!(strtok(buffer, " "))) break; // INDEX (ignored)
+      if (!(local = strtok(NULL, " "))) break; // LOCAL ADDRESS
+      if (!(strtok(NULL, " "))) break; // remote address (ignored)
+      if (!(strtok(NULL, " "))) break; // st (ignored)
+      if (!(strtok(NULL, " "))) break; // tx:rx queues (ignored)
+      if (!(strtok(NULL, " "))) break; // tr:tm-when (ignored)
+      if (!(strtok(NULL, " "))) break; // retrnsmt (ignored)
+      if (!(uid = strtok(NULL, " "))) break; // UID
+      if ((strcmp(local, bindstring)) == 0) {
+	id = strtol(uid, NULL, 10);
+	debugLog(LOG_DEBUG, "Found UID=%lu\n", id);
+	break;
+      }
     }
+    // ignoring EOF and possible I/O errors at this stage
+    fclose(portlist);
   }
-  fclose(portlist);
   return (uid_t)id;
 }
 
 // find the UID associated with a specific local ipv4 TCP port
 uid_t ipv4_tcp_port_uid(const char *ipv4, unsigned int port)
 {
-  char bindstring[32], *pbstr = bindstring;
-  uid_t id;
+  char bindstring[16], *pbstr = bindstring;
+  uid_t id = UID_NOT_FOUND;
 
-  ipv4_bindstring(ipv4, port, &pbstr, sizeof(bindstring));
-  id=uid_from_portlist(IPV4_TCP_PORTS, bindstring);
-  if (UID_NOT_FOUND == id)
-    debugLog(LOG_NOTICE, "UID for TCP port %i not found\n", port);
+  if ((ipv4_bindstring(ipv4, port, &pbstr, sizeof(bindstring))) != NULL) {
+    if ((id=uid_from_ipv4_connections(IPV4_TCP_PORTS, bindstring)) == UID_NOT_FOUND) {
+      debugLog(LOG_NOTICE, "UID for TCP port %i not found\n", port);
+    }
+  }
   return id;
 }
 
 // find the UID associated with a specific local ipv4 UDP port
 uid_t ipv4_udp_port_uid(const char *ipv4, unsigned int port)
 {
-  char bindstring[32], *pbstr = bindstring;
-  uid_t id;
+  char bindstring[16], *pbstr = bindstring;
+  uid_t id = UID_NOT_FOUND;
 
-  ipv4_bindstring(ipv4, port, &pbstr, sizeof(bindstring));
-  id=uid_from_portlist(IPV4_UDP_PORTS, bindstring);
-  if (UID_NOT_FOUND == id)
-    debugLog(LOG_NOTICE, "UID for UDP port %i not found\n", port);
+  if ((ipv4_bindstring(ipv4, port, &pbstr, sizeof(bindstring))) != NULL) {
+    if ((id=uid_from_ipv4_connections(IPV4_UDP_PORTS, bindstring)) == UID_NOT_FOUND) {
+      debugLog(LOG_NOTICE, "UID for UDP port %i not found\n", port);
+    }
+  }
   return id;
 }
