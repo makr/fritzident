@@ -3,8 +3,7 @@ CFLAGS ?= -m64 -Wall -Wextra -pie -fPIE -fstack-protector-all --param ssp-buffer
 LDFLAGS += -Wl,-pie,-z,relro,-z,now `pkg-config --libs libsystemd`
 
 BINDIR = $(DESTDIR)/usr/local/sbin
-#SYSTEMDDIR = /lib/systemd/system
-SYSTEMDDIR = /usr/lib/systemd/system
+SYSTEMDDIR = `pkg-config --variable=systemdsystemunitdir systemd`
 MANDIR = $(DESTDIR)/usr/local/share/man/man8
 NAME = fritzident
 
